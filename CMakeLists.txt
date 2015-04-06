@@ -11,27 +11,27 @@ ENDIF()
 
 find_package(PCL 1.7 REQUIRED)
 
-project(BSplineFitting)
+project(PoissonReconstruction)
 
 add_subdirectory(src)
 
 include_directories(${PCL_INCLUDE_DIRS})
-include_directories(${BSplineFitting_SOURCE_DIR}/include)
+include_directories(${PoissonReconstruction_SOURCE_DIR}/include)
 
 link_directories(${PCL_LIBRARY_DIRS})
 
 add_definitions(${PCL_DEFINITIONS})
 
-file(GLOB_RECURSE BSplineFitting_HEADERS include/*.h)
-file(GLOB_RECURSE BSplineFitting_SOURCES src/*.cpp)
-set (BSplineFitting_INCLUDE_DIRS "")
-foreach (_headerFile ${BSplineFitting_HEADERS})
+file(GLOB_RECURSE PoissonReconstruction_HEADERS include/*.h)
+file(GLOB_RECURSE PoissonReconstruction_SOURCES src/*.cpp)
+set (PoissonReconstruction_INCLUDE_DIRS "")
+foreach (_headerFile ${PoissonReconstruction_HEADERS})
     get_filename_component(_dir ${_headerFile} PATH)
-    list (APPEND BSplineFitting_INCLUDE_DIRS ${_dir})
+    list (APPEND PoissonReconstruction_INCLUDE_DIRS ${_dir})
 endforeach()
-list(REMOVE_DUPLICATES BSplineFitting_INCLUDE_DIRS)
+list(REMOVE_DUPLICATES PoissonReconstruction_INCLUDE_DIRS)
 
-include_directories(${BSplineFitting_INCLUDE_DIRS})
+include_directories(${PoissonReconstruction_INCLUDE_DIRS})
 
-add_executable (BSplineFitting ${BSplineFitting_SOURCES} ${BSplineFitting_HEADERS})
-target_link_libraries (BSplineFitting ${PCL_LIBRARIES})
+add_executable (PoissonReconstruction ${PoissonReconstruction_SOURCES} ${PoissonReconstruction_HEADERS})
+target_link_libraries (PoissonReconstruction ${PCL_LIBRARIES})
