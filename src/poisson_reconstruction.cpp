@@ -19,210 +19,205 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
 // TestVideoSegmentation.cpp : Defines the entry point for the console application.
 //
 
-#include "bspline_fitting.h"
+#include "poisson_reconstruction.h"
 
 using namespace std;
 using namespace pcl;
+using namespace pcl::io;
+using namespace pcl::console;
 
+void
+	printHelp (int, char **argv)
+{
+	print_error ("Syntax is: %s input.pcd output.vtk <options>\n", argv[0]);
+	print_info ("  where options are:\n");
+	print_info ("                     -depth X          = set the maximum depth of the tree that will be used for surface reconstruction (default: ");
+	print_value ("%d", default_depth); print_info (")\n");
+	print_info ("                     -solver_divide X  = set the the depth at which a block Gauss-Seidel solver is used to solve the Laplacian equation (default: ");
+	print_value ("%d", default_solver_divide); print_info (")\n");
+	print_info ("                     -iso_divide X     = Set the depth at which a block iso-surface extractor should be used to extract the iso-surface (default: ");
+	print_value ("%d", default_iso_divide); print_info (")\n");
+	print_info ("                     -point_weight X   = Specifies the importance that interpolation of the point samples is given in the formulation of the screened Poisson equation. The results of the original (unscreened) Poisson Reconstruction can be obtained by setting this value to 0. (default: ");
+	print_value ("%f", default_point_weight); print_info (")\n");
+}
+
+void prepareCloud (pcl::PCLPointCloud2 &cloud)
+{
+	PointCloud<PointXYZRGBA>::Ptr output (new PointCloud<pcl::PointXYZRGBA> ());
+	fromPCLPointCloud2(cloud,*output);
+	cloud.width = 640;
+	cloud.height = 480;
+	cloud.is_dense = true;
+	output->width = 640;
+	output->height = 480;
+	output->is_dense = true;
+
+	//Need to set 0s to nan
+	PointCloud<PointXYZRGBA>::iterator pCloud = output->begin();
+	while(pCloud != output->end())
+	{
+		if(pCloud->z == 0)
+			pCloud->z = FP_NAN;
+		++pCloud;
+	}
+
+	// estimate normals
+	pcl::PointCloud<pcl::Normal>::Ptr normals (new pcl::PointCloud<pcl::Normal>);
+
+	pcl::IntegralImageNormalEstimation<pcl::PointXYZRGBA, pcl::Normal> ne;
+	ne.setNormalEstimationMethod (ne.AVERAGE_3D_GRADIENT);
+	ne.setMaxDepthChangeFactor(0.02f);
+	ne.setNormalSmoothingSize(10.0f);
+	ne.setInputCloud(output);
+	ne.compute(*normals);
+	PCLPointCloud2 out,out2;
+	toPCLPointCloud2(*normals, out);
+	toPCLPointCloud2(*output, out2);
+	concatenateFields(out,out2,cloud);
+
+	/*MovingLeastSquares<pcl::PointXYZ, pcl::PointXYZ> mls;
+	mls.setInputCloud (output);
+	mls.setSearchRadius (0.01);
+	mls.setPolynomialFit (true);
+	mls.setPolynomialOrder (2);
+	mls.setUpsamplingMethod (MovingLeastSquares<PointXYZ, PointXYZ>::SAMPLE_LOCAL_PLANE);
+	mls.setUpsamplingRadius (0.005);
+	mls.setUpsamplingStepSize (0.003);
+	PointCloud<PointXYZ>::Ptr cloud_smoothed (new PointCloud<PointXYZ> ());
+	mls.process (*cloud_smoothed);
+
+	NormalEstimationOMP<PointXYZ, Normal> ne;
+	ne.setNumberOfThreads (8);
+	ne.setInputCloud (cloud_smoothed);
+	ne.setRadiusSearch (0.01);
+	Eigen::Vector4f centroid;
+	compute3DCentroid (*cloud_smoothed, centroid);
+	ne.setViewPoint (centroid[0], centroid[1], centroid[2]);
+	PointCloud<Normal>::Ptr cloud_normals (new PointCloud<Normal> ());
+	ne.compute (*cloud_normals);
+	for (size_t i = 0; i < cloud_normals->size (); ++i)
+	{
+	cloud_normals->points[i].normal_x *= -1;
+	cloud_normals->points[i].normal_y *= -1;
+	cloud_normals->points[i].normal_z *= -1;
+	}
+	PointCloud<PointNormal>::Ptr cloud_smoothed_normals (new PointCloud<PointNormal> ());
+	concatenateFields (*cloud_smoothed, *cloud_normals, *cloud_smoothed_normals);
+	PCLPointCloud2 out;
+	toPCLPointCloud2(*cloud_smoothed_normals, out);
+	concatenateFields(cloud,out,cloud);*/
+}
+
+bool
+	loadCloud (const std::string &filename, pcl::PCLPointCloud2 &cloud)
+{
+	TicToc tt;
+	print_highlight ("Loading "); print_value ("%s ", filename.c_str ());
+
+	tt.tic ();
+	if (loadPCDFile (filename, cloud) < 0)
+		return (false);
+	prepareCloud(cloud);
+
+	print_info ("[done, "); print_value ("%g", tt.toc ()); print_info (" ms : "); print_value ("%d", cloud.width * cloud.height); print_info (" points]\n");
+	print_info ("Available dimensions: "); print_value ("%s\n", pcl::getFieldsList (cloud).c_str ());
+
+	return (true);
+}
+
+void
+	compute (const pcl::PCLPointCloud2::ConstPtr &input, PolygonMesh &output,
+	int depth, int solver_divide, int iso_divide, float point_weight)
+{
+	PointCloud<PointNormal>::Ptr xyz_cloud (new pcl::PointCloud<PointNormal> ());
+	fromPCLPointCloud2 (*input, *xyz_cloud);
+
+	print_info ("Using parameters: depth %d, solverDivide %d, isoDivide %d\n", depth, solver_divide, iso_divide);
+
+	Poisson<PointNormal> poisson;
+	poisson.setDepth (depth);
+	poisson.setSolverDivide (solver_divide);
+	poisson.setIsoDivide (iso_divide);
+	poisson.setPointWeight (point_weight);
+	poisson.setInputCloud (xyz_cloud);
+
+	TicToc tt;
+	tt.tic ();
+	print_highlight ("Computing ...");
+	poisson.reconstruct (output);
+
+	print_info ("[Done, "); print_value ("%g", tt.toc ()); print_info (" ms]\n");
+}
+
+void
+	saveCloud (const std::string &filename, const PolygonMesh &output)
+{
+	TicToc tt;
+	tt.tic ();
+
+	print_highlight ("Saving "); print_value ("%s ", filename.c_str ());
+	saveVTKFile (filename, output);
+
+	print_info ("[done, "); print_value ("%g", tt.toc ()); print_info (" ms]\n");
+}
+
+/* ---[ */
 int
-main (int argc, char *argv[])
+	main (int argc, char** argv)
 {
-  std::string pcd_file, file_3dm;
+	print_info ("Compute the surface reconstruction of a point cloud using the Poisson surface reconstruction (pcl::surface::Poisson). For more information, use: %s -h\n", argv[0]);
 
-  if (argc < 3)
-  {
-    printf ("\nUsage: pcl_example_nurbs_fitting_surface pcd<PointXYZ>-in-file 3dm-out-file\n\n");
+	if (argc < 3)
+	{
+		printHelp (argc, argv);
+		return (-1);
+	}
+
+	// Parse the command line arguments for .pcd files
+	std::vector<int> pcd_file_indices;
+	pcd_file_indices = parse_file_extension_argument (argc, argv, ".pcd");
+	if (pcd_file_indices.size () != 1)
+	{
+		print_error ("Need one input PCD file and one output VTK file to continue.\n");
+		return (-1);
+	}
+
+	std::vector<int> vtk_file_indices = parse_file_extension_argument (argc, argv, ".vtk");
+	if (vtk_file_indices.size () != 1)
+	{
+		print_error ("Need one output VTK file to continue.\n");
+		return (-1);
+	}
+
+	// Command line parsing
+	int depth = default_depth;
+	parse_argument (argc, argv, "-depth", depth);
+	print_info ("Using a depth of: "); print_value ("%d\n", depth);
+
+	int solver_divide = default_solver_divide;
+	parse_argument (argc, argv, "-solver_divide", solver_divide);
+	print_info ("Setting solver_divide to: "); print_value ("%d\n", solver_divide);
+
+	int iso_divide = default_iso_divide;
+	parse_argument (argc, argv, "-iso_divide", iso_divide);
+	print_info ("Setting iso_divide to: "); print_value ("%d\n", iso_divide);
+
+	float point_weight = default_point_weight;
+	parse_argument (argc, argv, "-point_weight", point_weight);
+	print_info ("Setting point_weight to: "); print_value ("%f\n", point_weight);
+
+	// Load the first file
+	pcl::PCLPointCloud2::Ptr cloud (new pcl::PCLPointCloud2);
+	if (!loadCloud (argv[pcd_file_indices[0]], *cloud))
+		return (-1);
+
+	// Apply the Poisson surface reconstruction algorithm
+	PolygonMesh output;
+	compute (cloud, output, depth, solver_divide, iso_divide, point_weight);
+
+	// Save into the second file
+	saveCloud (argv[vtk_file_indices[0]], output);
+
+	printf("Done!\n");
 	cin.get();
-    exit (0);
-  }
-  pcd_file = argv[1];
-  file_3dm = argv[2];
-
-  pcl::visualization::PCLVisualizer viewer ("B-spline surface fitting");
-  viewer.setSize (800, 600);
-
-  // ############################################################################
-  // load point cloud
-
-  printf ("  loading %s\n", pcd_file.c_str ());
-  pcl::PointCloud<Point>::Ptr cloud (new pcl::PointCloud<Point>);
-  pcl::PCLPointCloud2 cloud2;
-  pcl::on_nurbs::NurbsDataSurface data;
-
-  if (pcl::io::loadPCDFile (pcd_file, cloud2) == -1)
-    throw std::runtime_error ("  PCD file not found.");
-
-  fromPCLPointCloud2 (cloud2, *cloud);
-  PointCloud2Vector3d (cloud, data.interior);
-  pcl::visualization::PointCloudColorHandlerCustom<Point> handler (cloud, 0, 255, 0);
-  viewer.addPointCloud<Point> (cloud, handler, "cloud_cylinder");
-  printf ("  %lu points in data set\n", cloud->size ());
-
-  // ############################################################################
-  // fit B-spline surface
-
-  // parameters
-  unsigned order (3);
-  unsigned refinement (5);
-  unsigned iterations (10);
-  unsigned mesh_resolution (256);
-
-  pcl::on_nurbs::FittingSurface::Parameter params;
-  params.interior_smoothness = 0.2;
-  params.interior_weight = 1.0;
-  params.boundary_smoothness = 0.2;
-  params.boundary_weight = 0.0;
-
-  // initialize
-  printf ("  surface fitting ...\n");
-  ON_NurbsSurface nurbs = pcl::on_nurbs::FittingSurface::initNurbsPCABoundingBox (order, &data);
-  pcl::on_nurbs::FittingSurface fit (&data, nurbs);
-  //  fit.setQuiet (false); // enable/disable debug output
-
-  // mesh for visualization
-  pcl::PolygonMesh mesh;
-  pcl::PointCloud<pcl::PointXYZ>::Ptr mesh_cloud (new pcl::PointCloud<pcl::PointXYZ>);
-  std::vector<pcl::Vertices> mesh_vertices;
-  std::string mesh_id = "mesh_nurbs";
-  pcl::on_nurbs::Triangulation::convertSurface2PolygonMesh (fit.m_nurbs, mesh, mesh_resolution);
-  viewer.addPolygonMesh (mesh, mesh_id);
-
-  // surface refinement
-  for (unsigned i = 0; i < refinement; i++)
-  {
-    fit.refine (0);
-    fit.refine (1);
-    fit.assemble (params);
-    fit.solve ();
-    pcl::on_nurbs::Triangulation::convertSurface2Vertices (fit.m_nurbs, mesh_cloud, mesh_vertices, mesh_resolution);
-    viewer.updatePolygonMesh<pcl::PointXYZ> (mesh_cloud, mesh_vertices, mesh_id);
-    viewer.spinOnce ();
-  }
-
-  // surface fitting with final refinement level
-  for (unsigned i = 0; i < iterations; i++)
-  {
-    fit.assemble (params);
-    fit.solve ();
-    pcl::on_nurbs::Triangulation::convertSurface2Vertices (fit.m_nurbs, mesh_cloud, mesh_vertices, mesh_resolution);
-    viewer.updatePolygonMesh<pcl::PointXYZ> (mesh_cloud, mesh_vertices, mesh_id);
-    viewer.spinOnce ();
-  }
-
-  // ############################################################################
-  // fit B-spline curve
-
-  // parameters
-  pcl::on_nurbs::FittingCurve2dAPDM::FitParameter curve_params;
-  curve_params.addCPsAccuracy = 5e-2;
-  curve_params.addCPsIteration = 3;
-  curve_params.maxCPs = 200;
-  curve_params.accuracy = 1e-3;
-  curve_params.iterations = 100;
-
-  curve_params.param.closest_point_resolution = 0;
-  curve_params.param.closest_point_weight = 1.0;
-  curve_params.param.closest_point_sigma2 = 0.1;
-  curve_params.param.interior_sigma2 = 0.00001;
-  curve_params.param.smooth_concavity = 1.0;
-  curve_params.param.smoothness = 1.0;
-
-  // initialisation (circular)
-  printf ("  curve fitting ...\n");
-  pcl::on_nurbs::NurbsDataCurve2d curve_data;
-  curve_data.interior = data.interior_param;
-  curve_data.interior_weight_function.push_back (true);
-  ON_NurbsCurve curve_nurbs = pcl::on_nurbs::FittingCurve2dAPDM::initNurbsCurve2D (order, curve_data.interior);
-
-  // curve fitting
-  pcl::on_nurbs::FittingCurve2dASDM curve_fit (&curve_data, curve_nurbs);
-  // curve_fit.setQuiet (false); // enable/disable debug output
-  curve_fit.fitting (curve_params);
-  visualizeCurve (curve_fit.m_nurbs, fit.m_nurbs, viewer);
-
-  // ############################################################################
-  // triangulation of trimmed surface
-
-  printf ("  triangulate trimmed surface ...\n");
-  viewer.removePolygonMesh (mesh_id);
-  pcl::on_nurbs::Triangulation::convertTrimmedSurface2PolygonMesh (fit.m_nurbs, curve_fit.m_nurbs, mesh,
-                                                                   mesh_resolution);
-  viewer.addPolygonMesh (mesh, mesh_id);
-
-
-  // save trimmed B-spline surface
-  /*if ( fit.m_nurbs.IsValid() )
-  {
-    ONX_Model model;
-    ONX_Model_Object& surf = model.m_object_table.AppendNew();
-    surf.m_object = new ON_NurbsSurface(fit.m_nurbs);
-    surf.m_bDeleteObject = true;
-    surf.m_attributes.m_layer_index = 1;
-    surf.m_attributes.m_name = "surface";
-
-    ONX_Model_Object& curv = model.m_object_table.AppendNew();
-    curv.m_object = new ON_NurbsCurve(curve_fit.m_nurbs);
-    curv.m_bDeleteObject = true;
-    curv.m_attributes.m_layer_index = 2;
-    curv.m_attributes.m_name = "trimming curve";
-
-    model.Write(file_3dm.c_str());
-    printf("  model saved: %s\n", file_3dm.c_str());
-  }*/
-
-  printf ("  ... done.\n");
-
-  viewer.spin ();
-  cin.get();
-  return 0;
-}
-
-void
-PointCloud2Vector3d (pcl::PointCloud<Point>::Ptr cloud, pcl::on_nurbs::vector_vec3d &data)
-{
-  for (unsigned i = 0; i < cloud->size (); i++)
-  {
-    Point &p = cloud->at (i);
-    if (!pcl_isnan (p.x) && !pcl_isnan (p.y) && !pcl_isnan (p.z))
-      data.push_back (Eigen::Vector3d (p.x, p.y, p.z));
-  }
-}
-
-void
-visualizeCurve (ON_NurbsCurve &curve, ON_NurbsSurface &surface, pcl::visualization::PCLVisualizer &viewer)
-{
-  pcl::PointCloud<pcl::PointXYZRGB>::Ptr curve_cloud (new pcl::PointCloud<pcl::PointXYZRGB>);
-
-  pcl::on_nurbs::Triangulation::convertCurve2PointCloud (curve, surface, curve_cloud, 4);
-  for (std::size_t i = 0; i < curve_cloud->size () - 1; i++)
-  {
-    pcl::PointXYZRGB &p1 = curve_cloud->at (i);
-    pcl::PointXYZRGB &p2 = curve_cloud->at (i + 1);
-    std::ostringstream os;
-    os << "line" << i;
-    viewer.removeShape (os.str ());
-    viewer.addLine<pcl::PointXYZRGB> (p1, p2, 1.0, 0.0, 0.0, os.str ());
-  }
-
-  pcl::PointCloud<pcl::PointXYZRGB>::Ptr curve_cps (new pcl::PointCloud<pcl::PointXYZRGB>);
-  for (int i = 0; i < curve.CVCount (); i++)
-  {
-    ON_3dPoint p1;
-    curve.GetCV (i, p1);
-
-    double pnt[3];
-    surface.Evaluate (p1.x, p1.y, 0, 3, pnt);
-    pcl::PointXYZRGB p2;
-    p2.x = float (pnt[0]);
-    p2.y = float (pnt[1]);
-    p2.z = float (pnt[2]);
-
-    p2.r = 255;
-    p2.g = 0;
-    p2.b = 0;
-
-    curve_cps->push_back (p2);
-  }
-  viewer.removePointCloud ("cloud_cps");
-  viewer.addPointCloud (curve_cps, "cloud_cps");
 }

@@ -1,19 +1,16 @@
-#include <iostream>
-#include <pcl/point_cloud.h>
-#include <pcl/point_types.h>
+#include <pcl/PCLPointCloud2.h>
 #include <pcl/io/pcd_io.h>
+#include <pcl/io/vtk_io.h>
+#include <pcl/console/print.h>
+#include <pcl/console/parse.h>
+#include <pcl/console/time.h>
+#include <pcl/features/normal_3d_omp.h>
+#include <pcl/surface/mls.h>
+#include <pcl/surface/poisson.h>
+#include <pcl/features/integral_image_normal.h>
+#include <math.h>
 
-#include <pcl/visualization/pcl_visualizer.h>
-#include <pcl/surface/on_nurbs/fitting_surface_tdm.h>
-#include <pcl/surface/on_nurbs/fitting_curve_2d_asdm.h>
-#include <pcl/surface/on_nurbs/triangulation.h>
-
-typedef pcl::PointXYZ Point;
-
-void
-PointCloud2Vector3d (pcl::PointCloud<Point>::Ptr cloud, pcl::on_nurbs::vector_vec3d &data);
-
-void
-visualizeCurve (ON_NurbsCurve &curve,
-                ON_NurbsSurface &surface,
-                pcl::visualization::PCLVisualizer &viewer);
+int default_depth = 8;
+int default_solver_divide = 8;
+int default_iso_divide = 8;
+float default_point_weight = 4.0f;
